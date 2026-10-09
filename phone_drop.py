@@ -5,19 +5,21 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import os
 import secrets
 import socket
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 MAX_FILE_SIZE = 1024 * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024
 
 
-def lan_address() -> str:
+def route_address() -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.connect(("192.0.2.1", 80))
@@ -26,6 +28,27 @@ def lan_address() -> str:
         return "127.0.0.1"
     finally:
         sock.close()
+
+
+def local_addresses() -> list[tuple[str, str]]:
+    """List active IPv4 interfaces, with Wi-Fi first on Linux."""
+    try:
+        result = subprocess.run(
+            ["ip", "-j", "-4", "addr", "show", "up"],
+            check=True, capture_output=True, text=True,
+        )
+        interfaces = json.loads(result.stdout)
+        addresses = [
+            (interface["ifname"], address["local"])
+            for interface in interfaces
+            for address in interface.get("addr_info", [])
+            if address.get("scope") == "global" and address.get("family") == "inet"
+        ]
+        if addresses:
+            return sorted(addresses, key=lambda item: (not item[0].startswith("wl"), item[0]))
+    except (OSError, subprocess.CalledProcessError, ValueError, KeyError):
+        pass
+    return [("adresse détectée", route_address())]
 
 
 def safe_filename(name: str) -> str:
@@ -115,7 +138,7 @@ send.onclick=async()=>{{send.disabled=true;let done=0;for(const f of files.files
                 self.send_text(413, "Fichier trop volumineux (limite : 1 Gio).")
                 return
             query = parse_qs(urlsplit(self.path).query)
-            name = safe_filename(unquote(query.get("name", ["photo"])[0]))
+            name = safe_filename(query.get("name", ["photo"])[0])
             temp = folder / f".{secrets.token_hex(12)}.part"
             remaining = size
             try:
@@ -151,9 +174,12 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), make_handler(folder, token))
     server.daemon_threads = True
     server.save_lock = threading.Lock()
-    ip = lan_address() if args.host == "0.0.0.0" else args.host
     print(f"Dossier : {folder}", flush=True)
-    print(f"Sur le téléphone : http://{ip}:{server.server_port}/?token={quote(token)}", flush=True)
+    addresses = local_addresses() if args.host == "0.0.0.0" else [("interface choisie", args.host)]
+    print("Sur le téléphone, ouvrez le lien de l’interface Wi-Fi :", flush=True)
+    for interface, ip in addresses:
+        print(f"  {interface}: http://{ip}:{server.server_port}/?token={quote(token)}", flush=True)
+    print("Si plusieurs liens apparaissent, utilisez celui de l’interface wlp… ou wlan….", flush=True)
     print("Arrêter le serveur : Ctrl+C. Réseau local uniquement.", flush=True)
     try:
         server.serve_forever()

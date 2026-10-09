@@ -18,7 +18,14 @@ Pour choisir un autre dossier :
 python phone_drop.py --folder ~/Images/Depuis-le-telephone
 ```
 
-Le lien change à chaque lancement. Si le téléphone n’arrive pas à ouvrir la page, vérifiez que les deux appareils sont sur le même Wi‑Fi et que le pare-feu autorise le port TCP 8765 sur le réseau local. Certains réseaux invités empêchent les appareils de communiquer entre eux.
+Le lien change à chaque lancement. Si plusieurs liens sont affichés, utilisez celui de l’interface Wi‑Fi (`wlp…` ou `wlan…`), pas celui d’un VPN, d’un conteneur ou d’une autre interface virtuelle.
+
+Si le téléphone indique « adresse indisponible » :
+
+1. Ouvrez le même lien sur le HP. Si la page ne s’ouvre pas, relancez le serveur et vérifiez que vous copiez le lien complet, avec `http://`, le port `8765` et le code après `?token=`.
+2. Vérifiez que le Poco est connecté au Wi‑Fi du HP et que ses données mobiles ou son VPN ne prennent pas le relais. Vérifiez aussi que le Wi‑Fi n’est pas un réseau invité isolant les appareils.
+3. Sur le HP, utilisez `ip -4 addr show` pour repérer l’adresse de l’interface Wi‑Fi. Le lien doit contenir cette adresse. Si nécessaire, remplacez seulement l’adresse IP dans le lien affiché, en gardant le port et le code.
+4. Si le lien fonctionne sur le HP mais pas sur le Poco, vérifiez que le pare-feu du HP autorise les connexions entrantes TCP sur le port `8765` depuis le réseau local.
 
 ## Sécurité et limites
 
