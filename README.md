@@ -10,7 +10,11 @@ Dans un terminal, depuis le dossier du projet :
 python phone_drop.py
 ```
 
-Le dossier par défaut est `~/Pictures/Phone-Imports`. Le terminal affiche un lien temporaire contenant un code d’accès. Ouvrez ce lien sur le Poco, choisissez les photos à envoyer, puis appuyez sur **Envoyer**. Une fois le transfert fini, faites `Ctrl+C` dans le terminal. Les noms déjà présents sont conservés : un numéro est ajouté au nouveau fichier.
+Choisissez un mot de passe lorsque le programme le demande sur le PC. Le terminal affiche ensuite une adresse locale. Ouvrez-la sur le Poco et saisissez le mot de passe sur la page de connexion. Il est choisi à chaque lancement et n’est pas enregistré sur le disque.
+
+Choisissez des photos dans le sélecteur Android, y compris Google Photos lorsqu’il est proposé. Les aperçus apparaissent avant l’envoi ; la croix sur une photo la retire de la sélection. Vous pouvez en ajouter d’autres avec **Choisir des photos**. Appuyez sur **Envoyer les photos** pour lancer le transfert. Les fichiers reçus pendant cette visite apparaissent dans la liste sous le bouton.
+
+Le dossier par défaut est `~/Pictures/Phone-Imports`. Une fois le transfert fini, faites `Ctrl+C` dans le terminal. Les noms déjà présents sont conservés : un numéro est ajouté au nouveau fichier.
 
 Pour choisir un autre dossier :
 
@@ -18,15 +22,15 @@ Pour choisir un autre dossier :
 python phone_drop.py --folder ~/Images/Depuis-le-telephone
 ```
 
-Le lien change à chaque lancement. Si plusieurs liens sont affichés, utilisez celui de l’interface Wi‑Fi (`wlp…` ou `wlan…`), pas celui d’un VPN, d’un conteneur ou d’une autre interface virtuelle.
+Si plusieurs adresses sont affichées, utilisez celle de l’interface Wi‑Fi (`wlp…` ou `wlan…`) ou Ethernet du réseau local, pas celle d’un VPN ou d’un conteneur.
 
 Si le téléphone indique « adresse indisponible » :
 
-1. Ouvrez le même lien sur le HP. Si la page ne s’ouvre pas, relancez le serveur et vérifiez que vous copiez le lien complet, avec `http://`, le port `8765` et le code après `?token=`.
+1. Ouvrez la même adresse sur le HP. Si la page ne s’ouvre pas, relancez le serveur et vérifiez que vous copiez `http://`, l’adresse IP et le port `8765`.
 2. Vérifiez que le Poco est connecté au Wi‑Fi du HP et que ses données mobiles ou son VPN ne prennent pas le relais. Vérifiez aussi que le Wi‑Fi n’est pas un réseau invité isolant les appareils.
-3. Sur le HP, utilisez `ip -4 addr show` pour repérer l’adresse de l’interface Wi‑Fi. Le lien doit contenir cette adresse. Si nécessaire, remplacez seulement l’adresse IP dans le lien affiché, en gardant le port et le code.
+3. Sur le HP, utilisez `ip -4 addr show` pour repérer l’adresse de l’interface Wi‑Fi ou Ethernet. Le lien doit contenir cette adresse.
 4. Si le lien fonctionne sur le HP mais pas sur le Poco, vérifiez que le pare-feu du HP autorise les connexions entrantes TCP sur le port `8765` depuis le réseau local.
 
 ## Sécurité et limites
 
-Le serveur écoute sur le réseau local et utilise HTTP. Le code aléatoire protège l’accès à la page, mais le transfert n’est pas chiffré : utilisez un Wi‑Fi de confiance, ne partagez pas le lien et arrêtez le serveur après usage. Les fichiers sont transférés un par un, sans recompression, avec une limite de 1 Gio par fichier. Les fichiers incomplets ne sont pas conservés.
+Le serveur écoute sur le réseau local et utilise HTTP. Le mot de passe et les photos circulent sans chiffrement : utilisez un Wi‑Fi de confiance et arrêtez le serveur après usage. La connexion reste valable jusqu’à l’arrêt du serveur ; un nouveau mot de passe est demandé au démarrage suivant. Les fichiers sont transférés un par un, sans recompression, avec une limite de 1 Gio par fichier. Les fichiers incomplets ne sont pas conservés.

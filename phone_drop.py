@@ -4,19 +4,170 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import html
 import json
 import os
 import secrets
 import socket
 import subprocess
+import sys
 import threading
+from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 MAX_FILE_SIZE = 1024 * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024
+COOKIE_NAME = "phone_drop_session"
+
+STYLE = """
+*{box-sizing:border-box}
+body{font:16px system-ui,sans-serif;background:#f3f5f8;color:#172033;margin:0;padding:24px}
+main{max-width:720px;margin:5vh auto;background:white;padding:28px;border-radius:20px;box-shadow:0 8px 32px #17203312}
+h1{margin:0 0 8px}h2{font-size:18px;margin-top:30px}p{color:#596579;line-height:1.5}
+button,.pick{display:inline-block;border:0;border-radius:12px;padding:14px 18px;background:#2458d3;color:white;font:inherit;font-weight:650;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}.pick{width:100%;text-align:center}
+input[type=file]{display:none}
+input[type=password]{display:block;width:100%;font:inherit;padding:14px;border:1px solid #aab3c2;border-radius:10px;margin:16px 0}
+#send{width:100%;margin-top:16px;background:#172033}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(125px,1fr));gap:12px;margin-top:16px}
+.card{position:relative;border:1px solid #dce1e9;border-radius:12px;overflow:hidden;background:#f8f9fb}
+.card img{display:block;width:100%;height:112px;object-fit:cover}
+.card span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:8px;font-size:12px}
+.remove{position:absolute;right:6px;top:6px;background:#172033dc;border-radius:50%;width:30px;height:30px;padding:0;font-size:21px;line-height:1}
+#status{white-space:pre-wrap;min-height:24px;margin-top:16px}#received{padding-left:20px;overflow-wrap:anywhere}
+.error{color:#b42318}small{color:#69758a}
+"""
+
+# Keep JavaScript in a raw string: Python must not turn "\n" into a line break
+# inside a JavaScript string literal.
+UPLOAD_SCRIPT = r"""
+const picker = document.querySelector('#files');
+const previews = document.querySelector('#previews');
+const selection = document.querySelector('#selection');
+const send = document.querySelector('#send');
+const status = document.querySelector('#status');
+const received = document.querySelector('#received');
+const selected = new Map();
+let nextId = 0;
+let busy = false;
+
+function render() {
+  previews.replaceChildren();
+  for (const [id, item] of selected) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    const image = document.createElement('img');
+    image.src = item.url;
+    image.alt = item.file.name;
+    const name = document.createElement('span');
+    name.textContent = item.file.name;
+    const remove = document.createElement('button');
+    remove.className = 'remove';
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', 'Retirer ' + item.file.name);
+    remove.disabled = busy;
+    remove.onclick = () => {
+      URL.revokeObjectURL(item.url);
+      selected.delete(id);
+      render();
+    };
+    card.append(image, name, remove);
+    previews.append(card);
+  }
+  selection.textContent = selected.size
+    ? selected.size + ' photo(s) à envoyer'
+    : 'Aucune photo sélectionnée';
+  send.disabled = busy || selected.size === 0;
+  picker.disabled = busy;
+}
+
+picker.onchange = () => {
+  for (const file of picker.files) {
+    const id = nextId++;
+    selected.set(id, {file, url: URL.createObjectURL(file)});
+  }
+  picker.value = '';
+  status.textContent = '';
+  render();
+};
+
+send.onclick = async () => {
+  busy = true;
+  render();
+  let done = 0;
+  for (const [id, item] of [...selected]) {
+    const file = item.file;
+    status.textContent = 'Envoi de ' + file.name + '…';
+    try {
+      const response = await fetch('/upload?name=' + encodeURIComponent(file.name), {
+        method: 'POST',
+        headers: {'X-Phone-Drop': 'upload', 'Content-Type': 'application/octet-stream'},
+        body: file
+      });
+      if (!response.ok) throw Error(await response.text());
+      const entry = document.createElement('li');
+      entry.textContent = file.name;
+      received.prepend(entry);
+      URL.revokeObjectURL(item.url);
+      selected.delete(id);
+      done++;
+    } catch (error) {
+      status.textContent = 'Échec pour ' + file.name + ' : ' + error.message
+        + '\n' + done + ' fichier(s) reçu(s).';
+      break;
+    }
+  }
+  if (selected.size === 0) {
+    status.textContent = 'Terminé : ' + done + ' fichier(s) reçu(s).';
+  }
+  busy = false;
+  render();
+};
+
+render();
+"""
+
+
+def page(title: str, content: str, script: str = "") -> bytes:
+    return (
+        '<!doctype html><html lang="fr"><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f'<title>{html.escape(title)}</title><style>{STYLE}</style>'
+        f'<main>{content}</main><script>{script}</script></html>'
+    ).encode("utf-8")
+
+
+def login_page(error: bool = False) -> bytes:
+    message = '<p class="error">Mot de passe incorrect.</p>' if error else ""
+    return page(
+        "Connexion · Phone Drop",
+        '<h1>Phone Drop</h1><p>Entrez le mot de passe choisi sur l’ordinateur '
+        'pour envoyer des photos.</p>'
+        f'{message}<form method="post" action="/login">'
+        '<label for="password">Mot de passe</label>'
+        '<input id="password" name="password" type="password" required autofocus>'
+        '<button type="submit">Se connecter</button></form>',
+    )
+
+
+def upload_page(folder: Path) -> bytes:
+    content = (
+        '<h1>Envoyer des photos</h1><p>Destination : '
+        f'<b>{html.escape(str(folder))}</b></p>'
+        '<label class="pick" for="files">Choisir des photos</label>'
+        '<input id="files" type="file" accept="image/*" multiple>'
+        '<p id="selection">Aucune photo sélectionnée</p>'
+        '<div class="grid" id="previews"></div>'
+        '<button id="send" disabled>Envoyer les photos</button>'
+        '<div id="status" role="status"></div>'
+        '<h2>Fichiers reçus pendant cette visite</h2><ul id="received"></ul>'
+        '<small>Gardez cette page ouverte jusqu’à la fin du transfert.</small>'
+    )
+    return page("Envoyer des photos · Phone Drop", content, UPLOAD_SCRIPT)
 
 
 def route_address() -> str:
@@ -71,61 +222,76 @@ def available_path(folder: Path, name: str) -> Path:
         index += 1
 
 
-def make_handler(folder: Path, token: str):
+def make_handler(folder: Path, password: str, session: str):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "PhoneDrop/1.0"
+        server_version = "PhoneDrop/2.0"
 
         def log_message(self, _format: str, *_args: object) -> None:
-            # Request URLs contain the access token; never log them.
             return
 
-        def send_text(self, status: int, message: str) -> None:
-            data = message.encode()
+        def send_content(self, status: int, data: bytes, content_type: str,
+                         extra_headers: dict[str, str] | None = None) -> None:
             self.send_response(status)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            for key, value in (extra_headers or {}).items():
+                self.send_header(key, value)
             self.end_headers()
             self.wfile.write(data)
 
-        def authorized(self) -> bool:
-            return secrets.compare_digest(self.headers.get("X-Transfer-Token", ""), token)
+        def send_text(self, status: int, message: str) -> None:
+            self.send_content(status, message.encode(), "text/plain; charset=utf-8")
+
+        def authenticated(self) -> bool:
+            try:
+                jar = cookies.SimpleCookie()
+                jar.load(self.headers.get("Cookie", ""))
+                item = jar.get(COOKIE_NAME)
+                return item is not None and secrets.compare_digest(item.value, session)
+            except cookies.CookieError:
+                return False
 
         def do_GET(self) -> None:
-            query = parse_qs(urlsplit(self.path).query)
-            if not secrets.compare_digest(query.get("token", [""])[0], token):
-                self.send_text(403, "Code d’accès incorrect. Ouvrez le lien affiché sur l’ordinateur.")
+            if urlsplit(self.path).path != "/":
+                self.send_text(404, "Adresse inconnue.")
                 return
-            page = f"""<!doctype html>
-<html lang="fr"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta charset="utf-8"><title>Phone Drop</title>
-<style>
-*{{box-sizing:border-box}}body{{font:16px system-ui,sans-serif;background:#f3f5f8;color:#172033;margin:0;padding:24px}}
-main{{max-width:520px;margin:8vh auto;background:white;padding:28px;border-radius:20px;box-shadow:0 8px 32px #17203312}}
-h1{{margin:0 0 8px}}p{{color:#596579}}button,label.pick{{display:block;width:100%;border:0;border-radius:12px;padding:15px;background:#2458d3;color:white;font-size:17px;font-weight:650;text-align:center;cursor:pointer}}
-input{{display:none}}#send{{margin-top:12px;background:#172033}}#status{{white-space:pre-wrap;min-height:24px;margin-top:16px}}small{{color:#69758a}}
-</style><main><h1>Envoyer des photos</h1><p>Choisissez une ou plusieurs photos. Elles seront copiées dans <b>{html.escape(str(folder))}</b>.</p>
-<label class="pick" for="files">Choisir des photos</label><input id="files" type="file" accept="image/*" multiple>
-<p id="selection"><small>Aucun fichier choisi</small></p><button id="send" disabled>Envoyer</button><div id="status" role="status"></div>
-<small>Gardez cette page ouverte jusqu’à la fin du transfert.</small></main>
-<script>
-const token={token!r}, files=document.querySelector('#files'), send=document.querySelector('#send'), status=document.querySelector('#status');
-files.onchange=()=>{{document.querySelector('#selection').textContent=files.files.length?files.files.length+' fichier(s) sélectionné(s)':'Aucun fichier choisi';send.disabled=!files.files.length;status.textContent=''}};
-send.onclick=async()=>{{send.disabled=true;let done=0;for(const f of files.files){{status.textContent='Envoi de '+f.name+' ('+(done+1)+'/'+files.files.length+')…';try{{const r=await fetch('/upload?name='+encodeURIComponent(f.name),{{method:'POST',headers:{{'X-Transfer-Token':token,'Content-Type':'application/octet-stream'}},body:f}});if(!r.ok)throw Error(await r.text());done++;status.textContent='Envoyé : '+f.name+' ('+done+'/'+files.files.length+')'}}catch(e){{status.textContent='Échec pour '+f.name+' : '+e.message+'\n'+done+' fichier(s) envoyé(s).';send.disabled=false;return}}}}status.textContent='Terminé : '+done+' fichier(s) reçu(s).';files.value='';document.querySelector('#selection').textContent='Aucun fichier choisi'}};
-</script></html>""".encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(page)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(page)
+            data = upload_page(folder) if self.authenticated() else login_page()
+            self.send_content(200, data, "text/html; charset=utf-8")
 
         def do_POST(self) -> None:
-            if not self.authorized():
-                self.send_text(403, "Code d’accès incorrect.")
-                return
-            if urlsplit(self.path).path != "/upload":
+            path = urlsplit(self.path).path
+            if path == "/login":
+                self.login()
+            elif path == "/upload":
+                self.upload()
+            else:
                 self.send_text(404, "Adresse inconnue.")
+
+        def login(self) -> None:
+            try:
+                size = int(self.headers.get("Content-Length", "-1"))
+            except ValueError:
+                size = -1
+            if size < 0 or size > 4096:
+                self.send_text(400, "Formulaire invalide.")
+                return
+            form = parse_qs(self.rfile.read(size).decode("utf-8", errors="replace"))
+            attempted = form.get("password", [""])[0]
+            if not secrets.compare_digest(attempted, password):
+                self.send_content(403, login_page(error=True), "text/html; charset=utf-8")
+                return
+            self.send_content(
+                303, b"", "text/plain; charset=utf-8",
+                {"Location": "/", "Set-Cookie": (
+                    f"{COOKIE_NAME}={session}; HttpOnly; SameSite=Strict; Path=/"
+                )},
+            )
+
+        def upload(self) -> None:
+            if not self.authenticated() or self.headers.get("X-Phone-Drop") != "upload":
+                self.send_text(403, "Connectez-vous d’abord.")
                 return
             try:
                 size = int(self.headers.get("Content-Length", "-1"))
@@ -168,18 +334,23 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0", help="interface d’écoute (défaut : toutes les interfaces)")
     parser.add_argument("--port", type=int, default=8765, help="port HTTP (défaut : 8765)")
     args = parser.parse_args()
+    password = getpass.getpass("Choisissez un mot de passe (8 caractères minimum) : ")
+    if len(password) < 8:
+        sys.exit("Le mot de passe doit contenir au moins 8 caractères.")
+    if password != getpass.getpass("Confirmez le mot de passe : "):
+        sys.exit("Les mots de passe ne correspondent pas.")
     folder = args.folder.expanduser().resolve()
     folder.mkdir(parents=True, exist_ok=True)
-    token = secrets.token_urlsafe(9)
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(folder, token))
+    session = secrets.token_urlsafe(32)
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(folder, password, session))
     server.daemon_threads = True
     server.save_lock = threading.Lock()
     print(f"Dossier : {folder}", flush=True)
     addresses = local_addresses() if args.host == "0.0.0.0" else [("interface choisie", args.host)]
-    print("Sur le téléphone, ouvrez le lien de l’interface Wi-Fi :", flush=True)
+    print("Ouvrez cette adresse depuis un autre appareil sur le même réseau :", flush=True)
     for interface, ip in addresses:
-        print(f"  {interface}: http://{ip}:{server.server_port}/?token={quote(token)}", flush=True)
-    print("Si plusieurs liens apparaissent, utilisez celui de l’interface wlp… ou wlan….", flush=True)
+        print(f"  {interface}: http://{ip}:{server.server_port}/", flush=True)
+    print("Utilisez l’adresse de l’interface Wi-Fi ou Ethernet du réseau local.", flush=True)
     print("Arrêter le serveur : Ctrl+C. Réseau local uniquement.", flush=True)
     try:
         server.serve_forever()
