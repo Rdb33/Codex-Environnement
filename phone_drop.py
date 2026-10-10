@@ -8,6 +8,7 @@ import getpass
 import html
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -204,36 +205,40 @@ def local_addresses() -> list[tuple[str, str]]:
     return [("adresse détectée", route_address())]
 
 
-def publish_local_name(address: str) -> subprocess.Popen[bytes] | None:
-    """Publish a temporary mDNS alias through the system Avahi daemon."""
+def publish_local_name(address: str) -> tuple[subprocess.Popen[bytes], str] | None:
+    """Publish an available temporary mDNS alias through Avahi."""
     if not shutil.which("avahi-publish") or not shutil.which("avahi-resolve-host-name"):
         return None
-    try:
-        process = subprocess.Popen(
-            ["avahi-publish", "-a", "phonedrop.local", address],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-    except OSError:
-        return None
-    for _ in range(12):
-        if process.poll() is not None:
-            break
+    computer = re.sub(r"[^a-z0-9-]", "-", socket.gethostname().split(".")[0].lower())
+    names = ["phonedrop.local", f"phonedrop-{computer or 'pc'}.local"]
+    for name in names:
         try:
-            result = subprocess.run(
-                ["avahi-resolve-host-name", "-4", "phonedrop.local"],
-                capture_output=True, text=True, timeout=1,
+            process = subprocess.Popen(
+                ["avahi-publish", "-a", name, address],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            if result.returncode == 0 and result.stdout.split()[-1:] == [address]:
-                return process
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        time.sleep(0.25)
-    process.terminate()
-    try:
-        process.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
+        except OSError:
+            return None
+        for _ in range(12):
+            if process.poll() is not None:
+                break
+            try:
+                result = subprocess.run(
+                    ["avahi-resolve-host-name", "-4", name],
+                    capture_output=True, text=True, timeout=1,
+                )
+                if result.returncode == 0 and result.stdout.split()[-1:] == [address]:
+                    return process, name
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            time.sleep(0.25)
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
     return None
 
 
@@ -388,14 +393,14 @@ def main() -> None:
     )
     if args.host not in ("0.0.0.0", "127.0.0.1"):
         local_ip = args.host
-    publisher = publish_local_name(local_ip) if local_ip else None
+    published = publish_local_name(local_ip) if local_ip else None
     print("Ouvrez cette adresse depuis un autre appareil sur le même réseau :", flush=True)
-    if publisher:
-        print(f"  http://phonedrop.local:{server.server_port}/", flush=True)
+    if published:
+        print(f"  http://{published[1]}:{server.server_port}/", flush=True)
     for interface, ip in addresses:
         print(f"  {interface}: http://{ip}:{server.server_port}/", flush=True)
-    if not publisher:
-        print("Nom phonedrop.local indisponible : vérifiez Avahi sur le PC.", flush=True)
+    if not published:
+        print("Nom local indisponible : vérifiez Avahi ou un conflit de nom.", flush=True)
     print("Utilisez l’adresse de l’interface Wi-Fi ou Ethernet du réseau local.", flush=True)
     print("Arrêter le serveur : Ctrl+C. Réseau local uniquement.", flush=True)
     try:
@@ -404,13 +409,13 @@ def main() -> None:
         print("\nServeur arrêté.")
     finally:
         server.server_close()
-        if publisher and publisher.poll() is None:
-            publisher.terminate()
+        if published and published[0].poll() is None:
+            published[0].terminate()
             try:
-                publisher.wait(timeout=2)
+                published[0].wait(timeout=2)
             except subprocess.TimeoutExpired:
-                publisher.kill()
-                publisher.wait()
+                published[0].kill()
+                published[0].wait()
 
 
 if __name__ == "__main__":
