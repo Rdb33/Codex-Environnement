@@ -9,10 +9,12 @@ import html
 import json
 import os
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
 import threading
+import time
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -202,6 +204,39 @@ def local_addresses() -> list[tuple[str, str]]:
     return [("adresse détectée", route_address())]
 
 
+def publish_local_name(address: str) -> subprocess.Popen[bytes] | None:
+    """Publish a temporary mDNS alias through the system Avahi daemon."""
+    if not shutil.which("avahi-publish") or not shutil.which("avahi-resolve-host-name"):
+        return None
+    try:
+        process = subprocess.Popen(
+            ["avahi-publish", "-a", "phonedrop.local", address],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+    for _ in range(12):
+        if process.poll() is not None:
+            break
+        try:
+            result = subprocess.run(
+                ["avahi-resolve-host-name", "-4", "phonedrop.local"],
+                capture_output=True, text=True, timeout=1,
+            )
+            if result.returncode == 0 and result.stdout.split()[-1:] == [address]:
+                return process
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        time.sleep(0.25)
+    process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+    return None
+
+
 def safe_filename(name: str) -> str:
     # Treat both Unix and Windows separators as path separators.
     name = name.replace("\\", "/").split("/")[-1].strip().strip(".")
@@ -347,9 +382,20 @@ def main() -> None:
     server.save_lock = threading.Lock()
     print(f"Dossier : {folder}", flush=True)
     addresses = local_addresses() if args.host == "0.0.0.0" else [("interface choisie", args.host)]
+    local_ip = next(
+        (ip for interface, ip in addresses if interface.startswith(("wl", "en", "eth"))),
+        None,
+    )
+    if args.host not in ("0.0.0.0", "127.0.0.1"):
+        local_ip = args.host
+    publisher = publish_local_name(local_ip) if local_ip else None
     print("Ouvrez cette adresse depuis un autre appareil sur le même réseau :", flush=True)
+    if publisher:
+        print(f"  http://phonedrop.local:{server.server_port}/", flush=True)
     for interface, ip in addresses:
         print(f"  {interface}: http://{ip}:{server.server_port}/", flush=True)
+    if not publisher:
+        print("Nom phonedrop.local indisponible : vérifiez Avahi sur le PC.", flush=True)
     print("Utilisez l’adresse de l’interface Wi-Fi ou Ethernet du réseau local.", flush=True)
     print("Arrêter le serveur : Ctrl+C. Réseau local uniquement.", flush=True)
     try:
@@ -358,6 +404,13 @@ def main() -> None:
         print("\nServeur arrêté.")
     finally:
         server.server_close()
+        if publisher and publisher.poll() is None:
+            publisher.terminate()
+            try:
+                publisher.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                publisher.kill()
+                publisher.wait()
 
 
 if __name__ == "__main__":

@@ -12,6 +12,15 @@ python phone_drop.py
 
 Choisissez un mot de passe lorsque le programme le demande sur le PC. Le terminal affiche ensuite une adresse locale. Ouvrez-la sur le Poco et saisissez le mot de passe sur la page de connexion. Il est choisi à chaque lancement et n’est pas enregistré sur le disque.
 
+Pour utiliser l’adresse courte `http://phonedrop.local:8765/` sur Arch Linux, installez Avahi une seule fois et démarrez son service :
+
+```sh
+sudo pacman -S --needed avahi
+sudo systemctl enable --now avahi-daemon
+```
+
+Phone Drop publie automatiquement `phonedrop.local` pendant qu’il tourne et affiche l’adresse courte seulement après avoir vérifié qu’elle pointe vers le PC. Il retire cette annonce à l’arrêt. Si le nom ne fonctionne pas dans le navigateur du téléphone, utilisez l’adresse IP également affichée. Le téléphone doit prendre en charge les noms `.local`, et le réseau doit laisser passer le trafic mDNS (UDP 5353).
+
 Choisissez des photos dans le sélecteur Android, y compris Google Photos lorsqu’il est proposé. Les aperçus apparaissent avant l’envoi ; la croix sur une photo la retire de la sélection. Vous pouvez en ajouter d’autres avec **Choisir des photos**. Appuyez sur **Envoyer les photos** pour lancer le transfert. Les fichiers reçus pendant cette visite apparaissent dans la liste sous le bouton.
 
 Le dossier par défaut est `~/Pictures/Phone-Imports`. Une fois le transfert fini, faites `Ctrl+C` dans le terminal. Les noms déjà présents sont conservés : un numéro est ajouté au nouveau fichier.
