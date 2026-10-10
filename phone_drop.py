@@ -214,7 +214,7 @@ def publish_local_name(address: str) -> tuple[subprocess.Popen[bytes], str] | No
     for name in names:
         try:
             process = subprocess.Popen(
-                ["avahi-publish", "-a", name, address],
+                ["avahi-publish", "-a", "-R", name, address],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
         except OSError:

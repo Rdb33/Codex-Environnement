@@ -19,7 +19,7 @@ sudo pacman -S --needed avahi
 sudo systemctl enable --now avahi-daemon
 ```
 
-Phone Drop publie automatiquement `phonedrop.local` pendant qu’il tourne et affiche l’adresse courte seulement après avoir vérifié qu’elle pointe vers le PC. Si ce nom est déjà utilisé, il essaie `phonedrop-NOM-DU-PC.local` et affiche le nom réellement obtenu. Il retire cette annonce à l’arrêt. Si le nom ne fonctionne pas dans le navigateur du téléphone, utilisez l’adresse IP également affichée. Le téléphone doit prendre en charge les noms `.local`, et le réseau doit laisser passer le trafic mDNS (UDP 5353).
+Phone Drop publie automatiquement `phonedrop.local` pendant qu’il tourne, sans créer d’entrée DNS inverse susceptible d’entrer en conflit avec le nom du PC. Il affiche l’adresse courte seulement après avoir vérifié qu’elle pointe vers le PC. Si ce nom est déjà utilisé, il essaie `phonedrop-NOM-DU-PC.local` et affiche le nom réellement obtenu. Il retire cette annonce à l’arrêt. Si le nom ne fonctionne pas dans le navigateur du téléphone, utilisez l’adresse IP également affichée. Le téléphone doit prendre en charge les noms `.local`, et le réseau doit laisser passer le trafic mDNS (UDP 5353).
 
 Choisissez des photos dans le sélecteur Android, y compris Google Photos lorsqu’il est proposé. Les aperçus apparaissent avant l’envoi ; la croix sur une photo la retire de la sélection. Vous pouvez en ajouter d’autres avec **Choisir des photos**. Appuyez sur **Envoyer les photos** pour lancer le transfert. Les fichiers reçus pendant cette visite apparaissent dans la liste sous le bouton.
 
